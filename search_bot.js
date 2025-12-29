@@ -27,6 +27,8 @@ const fetchWithRetry = async (url, options = {}, { retries = DEFAULT_FETCH_RETRI
             // On final attempt, throw a normalized error to avoid leaking raw messages
             if (attempt === retries) {
                 if (e.name === 'AbortError' || e.type === 'aborted' || e.message === 'The operation was aborted.') {
+                    // Observability
+                    await checkAndAlertEt(url);
                     throw new Error('ETIMEOUT');
                 }
                 throw e;
@@ -60,9 +62,47 @@ const ADMIN_ID = Number(process.env.ADMIN_CHAT_ID || 0);
 requireEnv(["TOKEN_SEARCH", "COG_API_KEY"]);
 console.log(`fetch defaults: timeout=${DEFAULT_FETCH_TIMEOUT_MS}ms retries=${DEFAULT_FETCH_RETRIES}`);
 
+// ETIMEOUT observability
+const ETIMEOUT = { count: 0, windowStart: Date.now(), alerted: false };
+const ETIMEOUT_WINDOW_MS = 60 * 60 * 1000; // 1h
+const ETIMEOUT_THRESHOLD = 5;
+const checkAndAlertEt = async (url) => {
+    const now = Date.now();
+    if (now - ETIMEOUT.windowStart > ETIMEOUT_WINDOW_MS) {
+        ETIMEOUT.count = 0; ETIMEOUT.windowStart = now; ETIMEOUT.alerted = false;
+    }
+    ETIMEOUT.count += 1;
+    try { Database.addLog(`fetch timeout: ${url}`); } catch (_) {}
+    if (!ETIMEOUT.alerted && ETIMEOUT.count >= ETIMEOUT_THRESHOLD && ADMIN_ID) {
+        ETIMEOUT.alerted = true;
+        try { await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Muitos timeouts nas requisições externas (${ETIMEOUT.count} em 1h).`); } catch (_) {}
+    }
+};
+
 const getMention = (user) => user.username ? `@${user.username}` : `<a href="tg://user?id=${user.id}">${user.first_name}</a>`;
 
-const delMsg = (ctx, msgId) => setTimeout(() => ctx.telegram.deleteMessage(ctx.chat.id, msgId).catch(() => {}), 300000);
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled Rejection:', reason);
+    try { Database.addLog(`UncaughtPromise: ${reason && reason.message ? reason.message : JSON.stringify(reason)}`); } catch (_) {}
+    setTimeout(() => process.exit(1), 1000);
+});
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+    try { Database.addLog(`UncaughtException: ${err && err.message ? err.message : String(err)}`); } catch (_) {}
+    setTimeout(() => process.exit(1), 1000);
+});
+process.on('SIGINT', async () => {
+    console.log('SIGINT received, shutting down gracefully');
+    try { await bot.stop(); } catch (_) {}
+    process.exit(0);
+});
+process.on('SIGTERM', async () => {
+    console.log('SIGTERM received, shutting down gracefully');
+    try { await bot.stop(); } catch (_) {}
+    process.exit(0);
+});
+
+const delMsg = (ctx, msgId) => setTimeout(() => ctx.telegram.deleteMessage(ctx.chat.id, msgId).catch((err)=>{ console.debug('deleteMessage failed:', err && err.message); }), 300000);
 
 // Gerador de Relatório HTML
 const genHtml = (title, query, raw) => {
@@ -86,27 +126,36 @@ COMMANDS.forEach(cmd => {
 
         const proc = await ctx.reply("⏳ Processando...");
         try {
-            const res = await fetchWithRetry(`https://cog.api.br/api/v1/consulta?type=${cmd}&dados=${query}`, { headers: { "x-api-key": COG_API_KEY } });
+            const res = await fetchWithRetry(`https://cog.api.br/api/v1/consulta?type=${cmd}&dados=${encodeURIComponent(query)}`, { headers: { "x-api-key": COG_API_KEY } });
             const json = await res.json();
             if (!json.success) throw new Error(json.message);
 
-            const html = await (await fetchWithRetry(json.data.publicUrl)).text();
+            let html = '';
+            try {
+                const pubRes = await fetchWithRetry(json.data.publicUrl);
+                html = await pubRes.text();
+            } catch (err) {
+                try { Database.addLog(`publicUrl fetch error: ${err && err.message ? err.message : String(err)}`); } catch (_) {}
+                console.error('Failed to fetch publicUrl:', err && err.message);
+            }
             const raw = html.match(/<textarea[^>]*id=["']resultText["'][^>]*>([\s\S]*?)<\/textarea>/i)?.[1].replace(/&amp;/g, "&") || "Sem dados.";
 
             const rid = `${ctx.from.id}_${Date.now()}`;
             resultsCache.set(rid, { cmd, query, raw, mention: getMention(ctx.from), stats: access.stats });
+            // Expira resultado em 10 minutos
+            setTimeout(() => resultsCache.delete(rid), 10 * 60 * 1000);
 
             const kb = Markup.inlineKeyboard([
                 [Markup.button.callback("Privado", `pv_${rid}`), Markup.button.callback("Resumo", `sm_${rid}`)],
                 [Markup.button.callback("Download Grupo", `gp_${rid}`)]
             ]);
 
-            const menu = await ctx.replyWithHTML(`ƒo. <b>Sucesso!</b>\n${getMention(ctx.from)}, escolha o destino:`, kb);
+            const menu = await ctx.replyWithHTML(`✅ <b>Sucesso!</b>\n${getMention(ctx.from)}, escolha o destino:`, kb);
             Database.addSearchHistory(ctx.from.id, { cmd, query });
             Database.registerUsage(ctx.from.id);
             delMsg(ctx, menu.message_id);
         } catch (e) {
-            Database.addLog(`busca ${cmd} erro: ${e.message}`);
+            try { Database.addLog(`busca ${cmd} erro: ${e.message}`); } catch (_) {}
             let userMsg;
             if (e.message === 'ETIMEOUT') userMsg = 'Tempo de busca esgotado. Tente novamente mais tarde.';
             else if (e.message && e.message.startsWith('HTTP')) userMsg = 'Serviço remoto indisponível.';

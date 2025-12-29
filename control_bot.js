@@ -3,6 +3,9 @@ import { Telegraf, Markup } from "telegraf";
 import { Database } from "./database.js";
 import fetch from "node-fetch";
 
+const DEFAULT_FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 20000);
+const DEFAULT_FETCH_RETRIES = Number(process.env.FETCH_RETRIES || 3);
+
 const requireEnv = (keys) => {
     const missing = keys.filter(k => !process.env[k]);
     if (missing.length) {
@@ -23,6 +26,8 @@ const fetchWithRetry = async (url, options = {}, { retries = DEFAULT_FETCH_RETRI
             console.error(`fetchWithRetry attempt ${attempt} failed for ${url}: ${e.message}`);
             if (attempt === retries) {
                 if (e.name === 'AbortError' || e.type === 'aborted' || e.message === 'The operation was aborted.') {
+                    // Observability
+                    await checkAndAlertEt(url);
                     throw new Error('ETIMEOUT');
                 }
                 throw e;
@@ -61,7 +66,46 @@ const APP_VERSION = process.env.npm_package_version || "dev";
 requireEnv(["TOKEN_CONTROL", "ADMIN_CHAT_ID"]);
 console.log(`fetch defaults: timeout=${DEFAULT_FETCH_TIMEOUT_MS}ms retries=${DEFAULT_FETCH_RETRIES}`);
 
+// ETIMEOUT observability
+const ETIMEOUT = { count: 0, windowStart: Date.now(), alerted: false };
+const ETIMEOUT_WINDOW_MS = 60 * 60 * 1000; // 1h
+const ETIMEOUT_THRESHOLD = 5;
+
+const checkAndAlertEt = async (url) => {
+    const now = Date.now();
+    if (now - ETIMEOUT.windowStart > ETIMEOUT_WINDOW_MS) {
+        ETIMEOUT.count = 0; ETIMEOUT.windowStart = now; ETIMEOUT.alerted = false;
+    }
+    ETIMEOUT.count += 1;
+    try { Database.addLog(`fetch timeout: ${url}`); } catch (_) {}
+    if (!ETIMEOUT.alerted && ETIMEOUT.count >= ETIMEOUT_THRESHOLD && ADMIN_ID) {
+        ETIMEOUT.alerted = true;
+        try { await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Muitos timeouts nas requisições externas (${ETIMEOUT.count} em 1h).`); } catch (_) {}
+    }
+};
+
 const getMention = (u) => `<a href="tg://user?id=${u.id}">${u.first_name}</a>`;
+
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled Rejection:', reason);
+    try { Database.addLog(`UncaughtPromise: ${reason && reason.message ? reason.message : JSON.stringify(reason)}`); } catch (_) {}
+    setTimeout(() => process.exit(1), 1000);
+});
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+    try { Database.addLog(`UncaughtException: ${err && err.message ? err.message : String(err)}`); } catch (_) {}
+    setTimeout(() => process.exit(1), 1000);
+});
+process.on('SIGINT', async () => {
+    console.log('SIGINT received, shutting down gracefully');
+    try { await bot.stop(); } catch (_) {}
+    process.exit(0);
+});
+process.on('SIGTERM', async () => {
+    console.log('SIGTERM received, shutting down gracefully');
+    try { await bot.stop(); } catch (_) {}
+    process.exit(0);
+});
 
 bot.start((ctx) => {
     const isAdminUser = ctx.from.id === ADMIN_ID;
@@ -114,7 +158,7 @@ bot.on('text', async (ctx, next) => {
         const chatMember = await ctx.getChatMember(ctx.from.id);
         if (chatMember.status === 'administrator' || chatMember.status === 'creator') return next();
 
-        await ctx.deleteMessage().catch(() => {});
+        await ctx.deleteMessage().catch((err)=>{ console.debug('deleteMessage failed:', err && err.message); });
         
         // Sistema de contagem de avisos
         let warns = (userWarns.get(ctx.from.id) || 0) + 1;
@@ -223,7 +267,10 @@ bot.command('broadcast', async (ctx) => {
         try {
             await bot.telegram.sendMessage(id, `\u{1F4E3} ${msg}`);
             ok += 1;
-        } catch (e) {}
+        } catch (e) {
+            try { Database.addLog(`broadcast fail: ${id} - ${e && e.message ? e.message : String(e)}`); } catch (_) {}
+            console.warn(`broadcast fail for ${id}: ${e && e.message}`);
+        }
     }
     ctx.replyWithHTML(`\u{1F4E3} Enviado para <b>${ok}</b> VIP(s).`);
 });
@@ -286,6 +333,59 @@ bot.command('pool_set', (ctx) => {
     if (!val || isNaN(val)) return ctx.reply('Use: /pool_set 100');
     Database.updatePool(val);
     ctx.replyWithHTML(`\u{1F4B0} Pool definido: <b>R$ ${val.toFixed(2)}</b>`);
+});
+
+// --- ALIASES / COMANDOS PARA USUÁRIO (PARA O TECLADO DO /start) ---
+
+bot.command('daily', (ctx) => {
+    const r = Database.claimDaily(ctx.from.id);
+    if (!r.ok) return ctx.reply('❌ Você já reivindicou o daily hoje.');
+    ctx.replyWithHTML(`💎 <b>Bônus diário</b>
+
+Parabéns! Você recebeu <b>+1 REP</b>.
+Rep atual: <b>${r.rep}</b>`);
+});
+
+bot.command('perfil', (ctx) => {
+    const stats = Database.getUsageStats(ctx.from.id);
+    ctx.replyWithHTML(
+        `\u{1F464} <b>SEU PERFIL</b>
+
+VIP: <b>${stats.isVip ? 'SIM' : 'NÃO'}</b>
+Usos hoje: <b>${stats.dailyCount}</b>
+Total de buscas: <b>${stats.totalSearches}</b>`
+    );
+});
+
+bot.command('top', (ctx) => {
+    const users = Database.getUsers();
+    const ranking = Object.entries(users)
+        .map(([id, u]) => ({ id, total: u.totalSearches || 0 }))
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 5);
+    if (!ranking.length) return ctx.reply('Sem dados.');
+    const lines = ranking.map((u, i) => `${i + 1}. ${u.id} - ${u.total}`);
+    ctx.replyWithHTML(`\u{1F3C6} <b>TOP BUSCAS</b>
+
+${lines.join('\n')}`);
+});
+
+bot.command('vip_info', (ctx) => {
+    const vipIds = Database.getVipUsers();
+    if (!vipIds.length) return ctx.reply('Nenhum VIP ativo.');
+    const lines = vipIds.slice(0, 20).map(id => `- ${id}`);
+    ctx.replyWithHTML(`💎 <b>VIPs ATIVOS</b>
+
+${lines.join('\n')}`);
+});
+
+bot.command('limite', (ctx) => {
+    const stats = Database.getUsageStats(ctx.from.id);
+    const limit = stats.isVip ? 50 : 10;
+    ctx.replyWithHTML(`\u{1F4CA} <b>SEU LIMITE</b>
+
+Usado hoje: <b>${stats.dailyCount}</b>
+Limite diário: <b>${limit}</b>`);
 });
 
 bot.launch().then(() => console.log("🛡️ OVERLORD v3.0 ONLINE"));

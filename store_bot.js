@@ -11,7 +11,27 @@ const requireEnv = (keys) => {
     }
 };
 
-const fetchWithRetry = async (url, options = {}, { retries = 2, timeoutMs = 12000 } = {}) => {
+const DEFAULT_FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 20000);
+const DEFAULT_FETCH_RETRIES = Number(process.env.FETCH_RETRIES || 3);
+
+// ETIMEOUT observability (local per store bot)
+const ETIMEOUT_LOCAL = { count: 0, windowStart: Date.now(), alerted: false };
+const ETIMEOUT_WINDOW_MS = 60 * 60 * 1000; // 1h
+const ETIMEOUT_THRESHOLD = 5;
+const checkAndAlertEtLocal = async (url) => {
+    const now = Date.now();
+    if (now - ETIMEOUT_LOCAL.windowStart > ETIMEOUT_WINDOW_MS) {
+        ETIMEOUT_LOCAL.count = 0; ETIMEOUT_LOCAL.windowStart = now; ETIMEOUT_LOCAL.alerted = false;
+    }
+    ETIMEOUT_LOCAL.count += 1;
+    try { Database.addLog(`fetch timeout: ${url}`); } catch (_) {}
+    if (!ETIMEOUT_LOCAL.alerted && ETIMEOUT_LOCAL.count >= ETIMEOUT_THRESHOLD && ADMIN_ID) {
+        ETIMEOUT_LOCAL.alerted = true;
+        try { await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Muitos timeouts nas requisições externas (store): ${ETIMEOUT_LOCAL.count} em 1h.`); } catch (_) {}
+    }
+};
+
+const fetchWithRetry = async (url, options = {}, { retries = DEFAULT_FETCH_RETRIES, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS } = {}) => {
     for (let attempt = 0; attempt <= retries; attempt += 1) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -20,7 +40,13 @@ const fetchWithRetry = async (url, options = {}, { retries = 2, timeoutMs = 1200
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res;
         } catch (e) {
-            if (attempt === retries) throw e;
+            if (attempt === retries) {
+                if (e.name === 'AbortError' || e.type === 'aborted' || e.message === 'The operation was aborted.') {
+                    await checkAndAlertEtLocal(url);
+                    throw new Error('ETIMEOUT');
+                }
+                throw e;
+            }
             await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
         } finally {
             clearTimeout(timeout);
@@ -29,12 +55,16 @@ const fetchWithRetry = async (url, options = {}, { retries = 2, timeoutMs = 1200
 };
 
 const bot = new Telegraf(process.env.TOKEN_STORE);
-const FLUXOPAY_API = "https://api.fluxopay.com/v1"; // Exemplo de endpoint
+const FLUXOPAY_API = process.env.FLUXOPAY_API || "https://api.fluxopay.com/v1"; // Exemplo de endpoint
 const FLUXO_TOKEN = process.env.FLUXO_TOKEN;
+const PAYMENT_PROVIDER = (process.env.PAYMENT_PROVIDER || 'fluxopay').toLowerCase(); // 'fluxopay' or 'axionpay'
+const AXION_PAY_URL = process.env.AXION_PAY_URL || 'http://localhost:3060';
+const AXION_PAY_KEY = process.env.AXION_PAY_KEY || process.env.API_KEY || '';
 const ADMIN_ID = Number(process.env.ADMIN_CHAT_ID || 0);
 const APP_VERSION = process.env.npm_package_version || "dev";
 
-requireEnv(["TOKEN_STORE", "FLUXO_TOKEN", "CALLBACK_URL"]);
+requireEnv(["TOKEN_STORE", "CALLBACK_URL"]);
+console.log(`payment provider: ${PAYMENT_PROVIDER} (fluxopay endpoint: ${FLUXOPAY_API}, axion: ${AXION_PAY_URL})`);
 
 const COUPONS = {
     AXION10: { type: 'percent', value: 10, label: '10% OFF' },
@@ -277,46 +307,136 @@ bot.action(/buy_(.+)/, async (ctx) => {
     });
 
     try {
-        const response = await fetchWithRetry(`${FLUXOPAY_API}/checkout`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${FLUXO_TOKEN}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                amount: finalAmount,
-                external_id: `order_${orderId}`,
-                description: `Axion Store - ${product.name}`,
-                callback_url: process.env.CALLBACK_URL
-            })
-        });
+        let data = null;
+        if (PAYMENT_PROVIDER === 'fluxopay') {
+            const response = await fetchWithRetry(`${FLUXOPAY_API}/checkout`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${FLUXO_TOKEN}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    amount: finalAmount,
+                    external_id: `order_${orderId}`,
+                    description: `Axion Store - ${product.name}`,
+                    callback_url: process.env.CALLBACK_URL
+                })
+            });
+            data = await response.json();
+            Database.updateOrder(orderId, {
+                status: 'pending_payment',
+                paymentId: data.id,
+                pix_code: data.pix_code,
+                payment_url: data.payment_url
+            });
 
-        const data = await response.json();
-        Database.updateOrder(orderId, {
-            status: 'pending_payment',
-            paymentId: data.id,
-            pix_code: data.pix_code,
-            payment_url: data.payment_url
-        });
+            ctx.replyWithHTML(
+                `\u{1F4A0} <b>FATURA GERADA</b>\n\n` +
+                `\u{1F4E6} <b>Produto:</b> ${product.name}\n` +
+                `\u{1F4B5} <b>Valor:</b> R$ ${finalAmount}\n` +
+                (discount > 0 ? `\u{1F3F7} <b>Desconto:</b> R$ ${discount}\n` : '') +
+                `\u{1F4CC} <b>PIX COPIA E COLA:</b>\n<code>${data.pix_code}</code>`,
+                Markup.inlineKeyboard([
+                    [Markup.button.url("\u{1F517} Pagar no App", data.payment_url)],
+                    [Markup.button.callback("\u2705 Já paguei", `check_${data.id}`)]
+                ])
+            );
+        } else if (PAYMENT_PROVIDER === 'axionpay') {
+            const headers = { 'Content-Type': 'application/json' };
+            if (AXION_PAY_KEY) headers['Authorization'] = `Bearer ${AXION_PAY_KEY}`;
+            // Idempotency key
+            headers['Idempotency-Key'] = orderId;
 
-        const discountLine = discount > 0 ? `\u{1F3F7} <b>Desconto:</b> R$ ${discount}\n` : '';
-        ctx.replyWithHTML(
-            `\u{1F4A0} <b>FATURA GERADA</b>\n\n` +
-            `\u{1F4E6} <b>Produto:</b> ${product.name}\n` +
-            `\u{1F4B5} <b>Valor:</b> R$ ${finalAmount}\n` +
-            discountLine +
-            `\u{1F4CC} <b>PIX COPIA E COLA:</b>\n<code>${data.pix_code}</code>`,
-            Markup.inlineKeyboard([
-                [Markup.button.url("\u{1F517} Pagar no App", data.payment_url)],
-                [Markup.button.callback("\u2705 J? paguei", `check_${data.id}`)]
-            ])
-        );
+            const response = await fetchWithRetry(`${AXION_PAY_URL.replace(/\/$/, '')}/payments/pix`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    amount: finalAmount,
+                    external_id: `order_${orderId}`,
+                    description: `Axion Store - ${product.name}`,
+                    callback_url: process.env.CALLBACK_URL
+                })
+            });
+
+            const j = await response.json();
+            // Response format: { ok: true, transaction: {...}, pix_payload: '...', ... }
+            const tx = j.transaction || j.transaction || j;
+            const pid = tx?.id || j.id || j.transaction?.providerReference || j.providerReference;
+            const pixCode = j.pix_code || j.pix_payload || tx?.pix_payload || tx?.pix_code;
+            const payUrl = j.payment_url || tx?.payment_url || null;
+
+            Database.updateOrder(orderId, {
+                status: 'pending_payment',
+                paymentId: pid,
+                pix_code: pixCode,
+                payment_url: payUrl
+            });
+
+            ctx.replyWithHTML(
+                `\u{1F4A0} <b>FATURA GERADA</b>\n\n` +
+                `\u{1F4E6} <b>Produto:</b> ${product.name}\n` +
+                `\u{1F4B5} <b>Valor:</b> R$ ${finalAmount}\n` +
+                (discount > 0 ? `\u{1F3F7} <b>Desconto:</b> R$ ${discount}\n` : '') +
+                `\u{1F4CC} <b>PIX COPIA E COLA:</b>\n<code>${pixCode || 'N/A'}</code>`,
+                Markup.inlineKeyboard([
+                    payUrl ? [Markup.button.url("\u{1F517} Pagar no App", payUrl)] : [],
+                    [Markup.button.callback("\u2705 Já paguei", `check_${pid || orderId}`)]
+                ].filter(Boolean))
+            );
+        } else {
+            throw new Error(`Unknown PAYMENT_PROVIDER: ${PAYMENT_PROVIDER}`);
+        }
 
     } catch (e) {
         Database.updateOrder(orderId, { status: 'payment_failed' });
-        ctx.reply("\u274C Erro ao conectar com FluxoPay.");
+        console.error('payment creation error:', e);
+        try { Database.addLog(`payment creation error: ${e && e.message ? e.message : String(e)}`); } catch (_) {}
+        ctx.reply("\u274C Erro ao gerar pagamento. Tente novamente mais tarde.");
     }
 });
 
 bot.action(/check_(.+)/, async (ctx) => {
-    await ctx.answerCbQuery("Pagamento em processamento. Aguarde o webhook.");
+    await ctx.answerCbQuery();
+    const paymentId = ctx.match[1];
+    try {
+        const orders = Database.getOrders();
+        const order = orders.find(o => o.paymentId == paymentId);
+        if (!order) return ctx.answerCbQuery("❌ Pedido não encontrado.", { show_alert: true });
+        if (['paid', 'delivered'].includes(order.status)) return ctx.answerCbQuery("✅ Pagamento já confirmado.", { show_alert: true });
+
+        // Consultar FluxoPay diretamente
+        const res = await fetchWithRetry(`${FLUXOPAY_API}/checkout/${paymentId}`, {
+            headers: { 'Authorization': `Bearer ${FLUXO_TOKEN}`, 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        const status = data.status || data.state || data.payment_status;
+
+        if (status === 'paid' || status === 'approved' || status === 'completed') {
+            Database.updateOrder(order.id, { status: 'paid' });
+            Database.addLog(`Pagamento confirmado (check): ${order.id}`);
+
+            // Recompensa e entrega (mesma lógica do webhook)
+            Database.addRep(order.userId, 50);
+            const product = Database.getProductById(order.productId);
+            if (product?.category === 'vip') {
+                Database.toggleVip(order.userId);
+                try { await bot.telegram.sendMessage(order.userId, "VIP ativado para a sua conta."); } catch (_) {}
+            }
+            const item = Database.popStock(order.productId);
+            if (item) {
+                try { await bot.telegram.sendMessage(order.userId, `Produto: ${item}`); } catch (_) {}
+                Database.updateOrder(order.id, { status: 'delivered', deliveredAt: new Date().toISOString() });
+            } else {
+                try { await bot.telegram.sendMessage(order.userId, "Seu produto está em preparação. Em breve enviaremos aqui."); } catch (_) {}
+                Database.updateOrder(order.id, { status: 'paid_pending_stock' });
+            }
+
+            return ctx.answerCbQuery("✅ Pagamento confirmado manualmente. Verifique suas mensagens.", { show_alert: true });
+        }
+
+        return ctx.answerCbQuery("Pagamento ainda não confirmado. Aguarde o webhook.", { show_alert: true });
+    } catch (e) {
+        console.error('check payment error:', e);
+        try { Database.addLog(`check payment error: ${e && e.message ? e.message : String(e)}`); } catch (_) {}
+        return ctx.answerCbQuery("Erro ao verificar pagamento. Tente novamente mais tarde.", { show_alert: true });
+    }
 });
 // --- AXION CASSINO COMPLEXO ---
 
