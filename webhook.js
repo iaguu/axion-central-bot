@@ -3,6 +3,7 @@ import bodyParser from 'body-parser';
 import { Telegraf } from 'telegraf';
 import { Database } from './database.js';
 import 'dotenv/config';
+import crypto from 'crypto';
 
 const requireEnv = (keys) => {
     const missing = keys.filter(k => !process.env[k]);
@@ -15,6 +16,11 @@ const requireEnv = (keys) => {
 const app = express();
 const bot = new Telegraf(process.env.TOKEN_STORE);
 app.use(bodyParser.json());
+
+const safeCompare = (a, b) => {
+    if (!a || !b || a.length !== b.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+};
 
 requireEnv(["TOKEN_STORE"]);
 
@@ -50,12 +56,14 @@ app.post('/webhook/fluxopay', async (req, res) => {
     const expectedToken = process.env.FLUXO_WEBHOOK_TOKEN;
     if (expectedToken) {
         const token = req.headers['x-webhook-token'];
-        if (token !== expectedToken) {
+        if (!safeCompare(token, expectedToken)) {
+            console.warn(`Webhook FluxoPay: Token inválido. Recebido: ${token ? '***' : 'null'}`);
             return res.sendStatus(401);
         }
     }
 
     if (!status || !external_id) {
+        console.warn(`Webhook FluxoPay: Payload inválido.`, req.body);
         return res.status(400).send("invalid payload");
     }
 
@@ -78,6 +86,11 @@ app.post('/webhook/fluxopay', async (req, res) => {
             Database.updateOrder(orderId, { status: 'paid' });
             const userId = order.userId;
             const productId = order.productId;
+            
+            const product = Database.getProductById(productId);
+            if (product?.category === 'vip') {
+                Database.setVip(userId, true);
+            }
 
             // 3. Dar recompensa de Reputação (Gamificação)
             Database.addRep(userId, 50);
@@ -109,12 +122,14 @@ app.post('/webhooks/pix', async (req, res) => {
     const expectedToken = process.env.PIX_WEBHOOK_SECRET;
     if (expectedToken) {
         const token = req.headers['x-webhook-token'];
-        if (token !== expectedToken) {
+        if (!safeCompare(token, expectedToken)) {
+            console.warn(`Webhook PIX: Token inválido.`);
             return res.sendStatus(401);
         }
     }
 
     if (!status || !external_id) {
+        console.warn(`Webhook PIX: Payload inválido.`, req.body);
         return res.status(400).send("invalid payload");
     }
 
@@ -135,7 +150,7 @@ app.post('/webhooks/pix', async (req, res) => {
             try { await bot.telegram.sendMessage(order.userId, `🎉 <b>PAGAMENTO CONFIRMADO!</b>\nSeu pedido ${orderId} foi confirmado via PIX.`); } catch (_) {}
             const product = Database.getProductById(order.productId);
             if (product?.category === 'vip') {
-                Database.toggleVip(order.userId);
+                Database.setVip(order.userId, true);
                 try { await bot.telegram.sendMessage(order.userId, "VIP ativado para a sua conta."); } catch (_) {}
             }
             const item = Database.popStock(order.productId);
@@ -162,6 +177,3 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 export { app, bot };
-
-
-

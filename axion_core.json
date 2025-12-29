@@ -1,6 +1,7 @@
 {
   "system": {
-    "lockdown": false
+    "lockdown": false,
+    "totalPool": 2325.4
   },
   "users": {
     "1795910095": {
@@ -51,7 +52,7 @@
       "dailyCount": 0,
       "lastReq": 1766198365267,
       "lastReset": 1766958237604,
-      "isVip": false
+      "isVip": true
     },
     "8117611575": {
       "rep": 0,
@@ -67,15 +68,157 @@
       "lastReset": 1766290647927,
       "isVip": false,
       "lastDaily": 0
+    },
+    "Gabriel": {
+      "rep": 0,
+      "dailyCount": 0,
+      "isVip": true
     }
   },
   "store": [
     {
-      "id": 1766254470053,
-      "name": "VIP30D",
-      "price": 29,
-      "category": "vip"
+      "id": "cc_gold",
+      "name": "CC Gold",
+      "price": 25,
+      "category": "cards",
+      "stock": [
+        "ITEM_IN_FILE"
+      ]
+    },
+    {
+      "id": "cc_platinum",
+      "name": "CC Platinum",
+      "price": 45,
+      "category": "cards",
+      "stock": [
+        "ITEM_IN_FILE"
+      ]
+    },
+    {
+      "id": "cc_infinity",
+      "name": "CC Infinity",
+      "price": 75,
+      "category": "cards",
+      "stock": [
+        "ITEM_IN_FILE"
+      ]
     }
   ],
-  "audit": []
+  "audit": [
+    {
+      "t": "29/12/2025, 17:13:26",
+      "a": "payment creation error: request to http://localhost:3060/payments/pix failed, reason: "
+    },
+    {
+      "t": "29/12/2025, 17:18:55",
+      "a": "busca leak erro: HTTP 400"
+    },
+    {
+      "t": "29/12/2025, 17:29:37",
+      "a": "VIP Add: Gabriel by 7588553526"
+    },
+    {
+      "t": "29/12/2025, 17:30:17",
+      "a": "busca pix erro: HTTP 400"
+    },
+    {
+      "t": "29/12/2025, 17:36:38",
+      "a": "VIP Add: 6103178709 by 7588553526"
+    },
+    {
+      "t": "29/12/2025, 18:00:33",
+      "a": "busca nome erro: resultsCache is not defined"
+    },
+    {
+      "t": "29/12/2025, 18:02:51",
+      "a": "payment creation error: HTTP 401"
+    },
+    {
+      "t": "29/12/2025, 18:10:27",
+      "a": "payment creation error: HTTP 401 - {\"ok\":false,\"code\":\"unauthorized\"}"
+    }
+  ],
+  "orders": [
+    {
+      "id": "vip_7588553526_1767035902234",
+      "status": "pending_payment",
+      "createdAt": "2025-12-29T19:18:24.645Z",
+      "userId": 7588553526,
+      "productId": "vip",
+      "amount": 29.9,
+      "amountOriginal": 29.9,
+      "discount": 0,
+      "couponCode": null,
+      "paymentId": "373bd55f-23d5-4305-9d2b-18bbb3e89d52",
+      "pix_code": "00020101021126330014br.gov.bcb.pix011138209847805520400005303986540529.905802BR5910LOJA AXION6009SAO PAULO62290525373BD55F23D543059D2B18BBB63043D78",
+      "payment_url": null,
+      "updatedAt": "2025-12-29T19:18:27.905Z"
+    },
+    {
+      "id": "o_1767037345274_673",
+      "status": "pending_payment",
+      "createdAt": "2025-12-29T19:42:25.276Z",
+      "userId": 7588553526,
+      "productId": "cc_gold",
+      "amount": 25,
+      "amountOriginal": 25,
+      "discount": 0,
+      "couponCode": null,
+      "paymentId": "a682c575-c335-44c1-bd87-514523a2106c",
+      "pix_code": "00020101021126330014br.gov.bcb.pix011138209847805520400005303986540525.005802BR5910LOJA AXION6009SAO PAULO62290525A682C575C33544C1BD87514526304B970",
+      "payment_url": null,
+      "updatedAt": "2025-12-29T19:42:25.624Z"
+    },
+    {
+      "id": "o_1767037482018_492",
+      "status": "pending_payment",
+      "createdAt": "2025-12-29T19:44:42.020Z",
+      "userId": 7588553526,
+      "productId": "cc_gold",
+      "amount": 25,
+      "amountOriginal": 25,
+      "discount": 0,
+      "couponCode": null,
+      "paymentId": "044b5a9c-89f2-4109-8148-64992e5b40eb",
+      "pix_code": "00020101021126330014br.gov.bcb.pix011138209847805520400005303986540525.005802BR5910LOJA AXION6009SAO PAULO62290525044B5A9C89F241098148649926304657E",
+      "payment_url": null,
+      "updatedAt": "2025-12-29T19:44:42.096Z"
+    },
+    {
+      "id": "o_1767039204215_988",
+      "status": "payment_failed",
+      "createdAt": "2025-12-29T20:13:24.221Z",
+      "userId": 7588553526,
+      "productId": "cc_gold",
+      "amount": 25,
+      "amountOriginal": 25,
+      "discount": 0,
+      "couponCode": null,
+      "updatedAt": "2025-12-29T20:13:26.102Z"
+    },
+    {
+      "id": "o_1767042169459_815",
+      "status": "payment_failed",
+      "createdAt": "2025-12-29T21:02:49.461Z",
+      "userId": 7588553526,
+      "productId": "cc_gold",
+      "amount": 25,
+      "amountOriginal": 25,
+      "discount": 0,
+      "couponCode": null,
+      "updatedAt": "2025-12-29T21:02:51.371Z"
+    },
+    {
+      "id": "o_1767042625063_867",
+      "status": "payment_failed",
+      "createdAt": "2025-12-29T21:10:25.065Z",
+      "userId": 7588553526,
+      "productId": "cc_gold",
+      "amount": 25,
+      "amountOriginal": 25,
+      "discount": 0,
+      "couponCode": null,
+      "updatedAt": "2025-12-29T21:10:26.964Z"
+    }
+  ]
 }

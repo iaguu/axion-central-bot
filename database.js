@@ -3,10 +3,11 @@ import path from 'path';
 
 const DB_FILE = path.resolve('axion_core.json');
 const LOCK_FILE = path.resolve('axion_core.lock');
+const CC_FILE = path.resolve('cc_stock.json');
 
 const sleepSync = (ms) => {
-    const sab = new SharedArrayBuffer(4);
-    Atomics.wait(new Int32Array(sab), 0, 0, ms);
+    const end = Date.now() + ms;
+    while (Date.now() < end) { /* busy wait para compatibilidade com main thread */ }
 };
 
 const acquireLock = (retries = 50, delayMs = 20) => {
@@ -76,7 +77,39 @@ const load = () => {
 const save = (data) => {
     const tmp = `${DB_FILE}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+    const fd = fs.openSync(tmp, 'w');
+    fs.writeSync(fd, JSON.stringify(data, null, 2));
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
     fs.renameSync(tmp, DB_FILE);
+};
+
+// --- GESTÃO DE ESTOQUE CC (ARQUIVO SEPARADO) ---
+const manageCCs = (action, level) => {
+    let data = {};
+    try {
+        if (fs.existsSync(CC_FILE)) {
+            data = JSON.parse(fs.readFileSync(CC_FILE, 'utf8'));
+        } else {
+            // Cria arquivo com dados fictícios se não existir
+            data = {
+                gold: ["5500000000000001|01|28|001"],
+                platinum: ["4400000000000001|01|29|002"],
+                infinity: ["3300000000000001|01|30|003"]
+            };
+            fs.writeFileSync(CC_FILE, JSON.stringify(data, null, 2));
+        }
+    } catch (e) { console.error("Erro ao ler CC_FILE:", e); data = {}; }
+
+    if (action === 'get') return data;
+    if (action === 'pop') {
+        if (data[level] && data[level].length > 0) {
+            const val = data[level].shift();
+            fs.writeFileSync(CC_FILE, JSON.stringify(data, null, 2));
+            return val;
+        }
+        return null;
+    }
 };
 
 export const Database = {
@@ -105,10 +138,10 @@ export const Database = {
     }),
     getUsers: () => load().users || {},
 
-    toggleVip: (userId) => withLock(() => {
+    setVip: (userId, status) => withLock(() => {
         const db = load();
         if (!db.users[userId]) db.users[userId] = { rep: 0, dailyCount: 0, isVip: false };
-        db.users[userId].isVip = !db.users[userId].isVip;
+        db.users[userId].isVip = status;
         save(db);
         return db.users[userId].isVip;
     }),
@@ -130,7 +163,7 @@ export const Database = {
             user.lastReset = now;
             save(db);
         }
-        const limit = user.isVip ? 50 : 10;
+        const limit = user.customLimit !== undefined ? user.customLimit : (user.isVip ? 50 : 10);
         if ((user.dailyCount || 0) >= limit) {
             return { ok: false, msg: "Limite diario atingido.", stats: { isVip: user.isVip, dailyCount: user.dailyCount || 0 } };
         }
@@ -145,6 +178,12 @@ export const Database = {
         db.users[userId].lastReq = Date.now();
         save(db);
         return db.users[userId];
+    }),
+    setCustomLimit: (userId, limit) => withLock(() => {
+        const db = load();
+        if (!db.users[userId]) db.users[userId] = { rep: 0, dailyCount: 0, isVip: false };
+        db.users[userId].customLimit = limit;
+        save(db);
     }),
     getUsageStats: (userId) => {
         const user = load().users?.[userId];
@@ -248,6 +287,23 @@ export const Database = {
         save(db);
         return product;
     }),
+    updateProduct: (id, data) => withLock(() => {
+        const db = load();
+        const p = (db.store || []).find(x => x.id == id);
+        if (!p) return false;
+        Object.assign(p, data);
+        save(db);
+        return true;
+    }),
+    deleteProduct: (id) => withLock(() => {
+        const db = load();
+        if (!db.store) return false;
+        const idx = db.store.findIndex(x => x.id == id);
+        if (idx === -1) return false;
+        db.store.splice(idx, 1);
+        save(db);
+        return true;
+    }),
     getProducts: () => load().store || [],
     getProductById: (productId) => (load().store || []).find(p => p.id == productId),
     addStock: (productId, items) => withLock(() => {
@@ -261,6 +317,23 @@ export const Database = {
     }),
     
     popStock: (productId) => withLock(() => {
+        // Intercepta produtos CC para usar o arquivo JSON específico
+        if (productId.startsWith('cc_')) {
+            const map = { 'cc_gold': 'gold', 'cc_platinum': 'platinum', 'cc_infinity': 'infinity' };
+            const key = map[productId];
+            if (key) {
+                const item = manageCCs('pop', key);
+                if (item) {
+                    // Sincroniza contagem no DB principal para exibição
+                    const db = load();
+                    const prod = (db.store || []).find(p => p.id === productId);
+                    if (prod && prod.stock && prod.stock.length > 0) { prod.stock.pop(); save(db); }
+                    return item;
+                }
+                return null;
+            }
+        }
+
         const db = load();
         const product = (db.store || []).find(p => p.id == productId);
         if (product && product.stock && product.stock.length > 0) {
@@ -316,3 +389,29 @@ export const Database = {
         save(db);
     })
 };
+
+// --- INICIALIZAÇÃO DO SISTEMA DE CCs ---
+// Garante que os produtos existam no banco e o estoque esteja sincronizado com o arquivo JSON
+(() => {
+    withLock(() => {
+        const db = load();
+        const ccs = manageCCs('get');
+        const levels = [
+            { id: 'cc_gold', name: 'CC Gold', price: 25.00, key: 'gold' },
+            { id: 'cc_platinum', name: 'CC Platinum', price: 45.00, key: 'platinum' },
+            { id: 'cc_infinity', name: 'CC Infinity', price: 75.00, key: 'infinity' }
+        ];
+        if (!db.store) db.store = [];
+        levels.forEach(lvl => {
+            let prod = db.store.find(p => p.id === lvl.id);
+            if (!prod) {
+                prod = { id: lvl.id, name: lvl.name, price: lvl.price, category: 'cards', stock: [] };
+                db.store.push(prod);
+            }
+            // Atualiza visualmente o estoque baseado no arquivo real
+            const realStock = ccs[lvl.key] || [];
+            prod.stock = new Array(realStock.length).fill('ITEM_IN_FILE');
+        });
+        save(db);
+    });
+})();
