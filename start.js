@@ -60,12 +60,12 @@ function startScript(scriptName) {
 
     console.log(`🚀 Iniciando módulo: ${scriptName}`);
 
-    const process = spawn('node', [scriptPath], {
+    const child = spawn('node', [scriptPath], {
         stdio: 'inherit',
         shell: true // Adicionado para compatibilidade com Windows/Linux
     });
 
-    process.on('close', (code) => {
+    child.on('close', (code) => {
         if (code !== 0) {
             console.error(`⚠️ O script ${scriptName} parou (Erro: ${code}). Reiniciando...`);
             setTimeout(() => startScript(scriptName), 5000);
