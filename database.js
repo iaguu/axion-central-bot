@@ -27,6 +27,10 @@ const acquireLock = (retries = 50, delayMs = 20) => {
             sleepSync(delayMs);
         }
     }
+    try {
+        const msg = `${new Date().toISOString()} - DB lock timeout after ${retries} retries`;
+        fs.appendFileSync(path.resolve('db_errors.log'), msg + '\n', 'utf8');
+    } catch (_) {}
     throw new Error('DB lock timeout');
 };
 
@@ -60,6 +64,11 @@ const load = () => {
         }
         return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     } catch (e) {
+        try {
+            const raw = fs.existsSync(DB_FILE) ? fs.readFileSync(DB_FILE, 'utf8') : null;
+            if (raw) fs.writeFileSync(`${DB_FILE}.corrupted.${Date.now()}.bak`, raw, 'utf8');
+            fs.appendFileSync(path.resolve('db_errors.log'), `${new Date().toISOString()} - DB load error: ${e.message}\n`, 'utf8');
+        } catch (_) {}
         return { system: { lockdown: false, totalPool: 0 }, users: {}, investments: [], store: [], orders: [], audit: [] };
     }
 };

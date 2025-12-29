@@ -31,6 +31,21 @@ http.createServer((req, res) => {
     console.log(`Healthcheck on port ${HEALTH_PORT}`);
 });
 
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled Rejection (manager):', reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception (manager):', err);
+});
+process.on('SIGINT', () => {
+    console.log('SIGINT received. Exiting manager.');
+    process.exit(0);
+});
+process.on('SIGTERM', () => {
+    console.log('SIGTERM received. Exiting manager.');
+    process.exit(0);
+});
+
 // Lista de arquivos que devem ser iniciados
 const scripts = [
     'control_bot.js',
