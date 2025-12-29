@@ -1,0 +1,140 @@
+{
+  "system": {
+    "lockdown": false
+  },
+  "users": {
+    "1795910095": {
+      "rep": 0,
+      "dailyCount": 0,
+      "lastReq": 1766205500986,
+      "lastReset": 1766958237599,
+      "isVip": false
+    },
+    "7588553526": {
+      "rep": 1,
+      "dailyCount": 0,
+      "lastReq": 1766474938531,
+      "lastReset": 1767016044132,
+      "isVip": true,
+      "lastDaily": 1766258847559,
+      "searchHistory": [
+        {
+          "cmd": "telefone",
+          "query": "6399850282",
+          "t": "2025-12-23T06:01:35.769Z"
+        },
+        {
+          "cmd": "cpf",
+          "query": "38209847805",
+          "t": "2025-12-23T07:27:04.382Z"
+        },
+        {
+          "cmd": "nome",
+          "query": "Henrique Gonçalles",
+          "t": "2025-12-23T07:28:58.528Z"
+        }
+      ],
+      "totalSearches": 3
+    },
+    "6103178709": {
+      "rep": 0,
+      "dailyCount": 0,
+      "lastReq": 1766198365267,
+      "lastReset": 1766958237604,
+      "isVip": false
+    },
+    "8117611575": {
+      "rep": 0,
+      "dailyCount": 0,
+      "lastReq": 1766217927581,
+      "lastReset": 1766448167456,
+      "isVip": false
+    },
+    "5738839042": {
+      "rep": 0,
+      "dailyCount": 0,
+      "lastReq": 0,
+      "lastReset": 1766290647927,
+      "isVip": false,
+      "lastDaily": 0
+    }
+  },
+  "store": [
+    {
+      "id": 1766254470053,
+      "name": "VIP30D",
+      "price": 29,
+      "category": "vip"
+    }
+  ],
+  "audit": [
+    {
+      "t": "20/12/2025, 16:28:17",
+      "a": "Gerou Fakedoc: Christian Rivera Vale Sobrinho"
+    },
+    {
+      "t": "20/12/2025, 22:43:18",
+      "a": "Gerou Fakedoc: Bruna Amanda Reis Jr."
+    },
+    {
+      "t": "21/12/2025, 01:16:22",
+      "a": "busca nome erro: The operation was aborted."
+    },
+    {
+      "t": "21/12/2025, 01:17:48",
+      "a": "busca telefone erro: HTTP 404"
+    },
+    {
+      "t": "21/12/2025, 12:00:59",
+      "a": "busca telefone erro: The operation was aborted."
+    },
+    {
+      "t": "22/12/2025, 21:03:24",
+      "a": "busca telefone erro: HTTP 404"
+    },
+    {
+      "t": "23/12/2025, 02:59:38",
+      "a": "busca telefone erro: HTTP 404"
+    },
+    {
+      "t": "23/12/2025, 04:06:48",
+      "a": "busca telefone erro: The operation was aborted."
+    },
+    {
+      "t": "23/12/2025, 04:25:27",
+      "a": "busca nome erro: The operation was aborted."
+    },
+    {
+      "t": "23/12/2025, 04:26:17",
+      "a": "busca cpf erro: HTTP 404"
+    },
+    {
+      "t": "23/12/2025, 04:30:40",
+      "a": "busca cpf erro: The operation was aborted."
+    },
+    {
+      "t": "23/12/2025, 04:36:33",
+      "a": "busca cpf erro: The operation was aborted."
+    },
+    {
+      "t": "28/12/2025, 18:44:35",
+      "a": "busca nome erro: The operation was aborted."
+    },
+    {
+      "t": "28/12/2025, 18:44:35",
+      "a": "busca nome erro: The operation was aborted."
+    },
+    {
+      "t": "28/12/2025, 18:44:35",
+      "a": "busca nome erro: The operation was aborted."
+    },
+    {
+      "t": "29/12/2025, 10:11:25",
+      "a": "busca telefone erro: HTTP 503"
+    },
+    {
+      "t": "29/12/2025, 10:48:01",
+      "a": "busca nome erro: The operation was aborted."
+    }
+  ]
+}
