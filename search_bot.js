@@ -1,4 +1,5 @@
-﻿import "dotenv/config";
+﻿
+import "dotenv/config";
 import { Telegraf, Markup } from "telegraf";
 import fetch from "node-fetch";
 import { Database } from "./database.js";
@@ -275,6 +276,69 @@ bot.command('ajuda_busca', (ctx) => {
     );
 });
 
+// Busca inteligente: /buscar
+bot.command('buscar', async (ctx) => {
+    const input = ctx.message.text.split(' ').slice(1).join(' ').trim();
+    if (!input) return ctx.replyWithHTML('Use: /buscar dado (CPF, CNPJ, telefone, e-mail, placa ou nome)');
+
+    // Regexes para identificar o tipo
+    const patterns = [
+        { type: 'cpf', re: /^\d{3}\.\d{3}\.\d{3}-\d{2}$|^\d{11}$/ },
+        { type: 'cnpj', re: /^\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}$|^\d{14}$/ },
+        { type: 'telefone', re: /^\d{2,3}\d{8,9}$|^(\(\d{2}\)\s?)?\d{4,5}-?\d{4}$/ },
+        { type: 'email', re: /^[^@\s]+@[^@\s]+\.[^@\s]+$/ },
+        { type: 'placa', re: /^[A-Z]{3}[0-9][0-9A-Z][0-9]{2}$/i },
+        { type: 'nome', re: /^[a-zA-ZÀ-ú'\- ]{5,}$/ }
+    ];
+    let tipo = null;
+    for (const p of patterns) {
+        if (p.re.test(input)) { tipo = p.type; break; }
+    }
+    if (!tipo) return ctx.replyWithHTML('Não foi possível identificar o tipo do dado. Tente CPF, CNPJ, telefone, e-mail, placa ou nome.');
+
+    const access = Database.checkAccess(ctx.from.id);
+    if (!access.ok) return ctx.replyWithHTML(access.msg);
+
+    await ctx.replyWithHTML(`🔎 <b>BUSCA INTELIGENTE</b>\n👤 De: ${getMention(ctx.from)}\n📂 Tipo: <code>${tipo.toUpperCase()}</code>\n🎯 Alvo: <code>${input}</code>`);
+    const proc = await ctx.reply('⏳ Processando...');
+    try {
+        const res = await fetchWithRetry(`https://cog.api.br/api/v1/consulta?type=${tipo}&dados=${encodeURIComponent(input)}`, { headers: { "x-api-key": COG_API_KEY } });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.message);
+
+        let html = '';
+        try {
+            const pubRes = await fetchWithRetry(json.data.publicUrl);
+            html = await pubRes.text();
+        } catch (err) {
+            try { Database.addLog(`publicUrl fetch error: ${err && err.message ? err.message : String(err)}`); } catch (_) {}
+            console.error('Failed to fetch publicUrl:', err && err.message);
+        }
+        const raw = html.match(/<textarea[^>]*id=["']resultText["'][^>]*>([\s\S]*?)<\/textarea>/i)?.[1].replace(/&amp;/g, "&") || "Sem dados.";
+
+        const rid = `${ctx.from.id}_${Date.now()}`;
+        resultsCache.set(rid, { cmd: tipo, query: input, raw, mention: getMention(ctx.from), stats: access.stats });
+        setTimeout(() => resultsCache.delete(rid), 10 * 60 * 1000);
+
+        const kb = Markup.inlineKeyboard([
+            [Markup.button.callback("Privado", `pv_${rid}`), Markup.button.callback("Resumo", `sm_${rid}`)],
+            [Markup.button.callback("Download Grupo", `gp_${rid}`)]
+        ]);
+
+        const menu = await ctx.replyWithHTML(`✅ <b>Sucesso!</b>\n${getMention(ctx.from)}, escolha o destino:`, kb);
+        Database.addSearchHistory(ctx.from.id, { cmd: tipo, query: input });
+        Database.registerUsage(ctx.from.id);
+        delMsg(ctx, menu.message_id);
+    } catch (e) {
+        try { Database.addLog(`busca inteligente erro: ${e.message}`); } catch (_) {}
+        let userMsg;
+        if (e.message === 'ETIMEOUT') userMsg = 'Tempo de busca esgotado. Tente novamente mais tarde.';
+        else if (e.message && e.message.startsWith('HTTP')) userMsg = 'Serviço remoto indisponível.';
+        else userMsg = 'Erro durante a busca.';
+        ctx.reply(`❌ Erro: ${userMsg}`);
+    }
+    finally { ctx.telegram.deleteMessage(ctx.chat.id, proc.message_id).catch(()=>{}); }
+});
 
 
 bot.command('report', async (ctx) => {

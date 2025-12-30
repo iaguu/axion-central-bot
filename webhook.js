@@ -16,6 +16,8 @@ const app = express();
 const bot = new Telegraf(process.env.TOKEN_STORE);
 app.use(bodyParser.json());
 
+const ADMIN_ID = Number(process.env.ADMIN_CHAT_ID || 0);
+
 requireEnv(["TOKEN_STORE"]);
 
 process.on('unhandledRejection', (reason) => {
@@ -59,12 +61,11 @@ app.post('/webhook/fluxopay', async (req, res) => {
         return res.status(400).send("invalid payload");
     }
 
+
     // 1. Verificar se o pagamento foi aprovado
     if (status === 'approved' || status === 'paid') {
-        
         // O external_id costuma ser o ID da ordem que criamos no bot
         console.log(`✅ Pagamento Confirmado: Ordem ${external_id}`);
-
         try {
             const orderId = external_id.replace('order_', '');
             const order = Database.getOrder(orderId);
@@ -72,25 +73,28 @@ app.post('/webhook/fluxopay', async (req, res) => {
                 Database.addLog(`Webhook sem pedido: ${orderId}`);
                 return res.sendStatus(200);
             }
-            if (['paid', 'paid_pending_stock', 'delivered'].includes(order.status)) {
+            if (["paid", "paid_pending_stock", "delivered"].includes(order.status)) {
                 return res.sendStatus(200);
             }
-            Database.updateOrder(orderId, { status: 'paid' });
-            const userId = order.userId;
-            const productId = order.productId;
-
-            // 3. Dar recompensa de Reputação (Gamificação)
-            Database.addRep(userId, 50);
-
-            // 4. Notificar o utilizador no Telegram
-            await bot.telegram.sendMessage(userId, 
-                `🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n` +
-                `Obrigado pela sua compra na <b>Axion Store</b>.\n` +
-                `💰 Valor: R$ ${amount}\n` +
-                `💎 Bónus: +50 REP adicionados ao seu perfil.\n\n` +
-                `📦 <b>O seu produto será enviado abaixo:</b>`, 
-                { parse_mode: 'HTML' }
-            );
+            Database.updateOrder(orderId, { status: "paid" });
+            Database.addRep(order.userId, 50);
+            try {
+                await bot.telegram.sendMessage(order.userId, `🎉 <b>PAGAMENTO CONFIRMADO!</b>\nSeu pedido ${orderId} foi confirmado via FluxoPay.`, { parse_mode: 'HTML' });
+            } catch (_) {}
+            const product = Database.getProductById(order.productId);
+            if (product?.category === 'vip') {
+                Database.toggleVip(order.userId);
+                try { await bot.telegram.sendMessage(order.userId, "VIP ativado para a sua conta."); } catch (_) {}
+            }
+            const item = Database.popStock(order.productId);
+            if (item) {
+                try { await bot.telegram.sendMessage(order.userId, `Produto: ${item}`); } catch (_) {}
+                Database.updateOrder(orderId, { status: 'delivered', deliveredAt: new Date().toISOString() });
+            } else {
+                try { await bot.telegram.sendMessage(order.userId, "Seu produto está em preparação. Em breve enviaremos aqui."); } catch (_) {}
+                Database.updateOrder(orderId, { status: 'paid_pending_stock' });
+            }
+            Database.addLog(`FluxoPay Webhook processed: ${orderId}`);
         } catch (error) {
             console.error("Erro ao processar entrega:", error);
             try { Database.addLog(`Webhook error: ${error && error.message ? error.message : String(error)}`); } catch (_) {}

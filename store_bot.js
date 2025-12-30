@@ -1,4 +1,5 @@
-﻿import "dotenv/config";
+﻿
+import "dotenv/config";
 import { Telegraf, Markup } from "telegraf";
 import { Database } from "./database.js";
 import fetch from "node-fetch";
@@ -59,7 +60,7 @@ const FLUXOPAY_API = process.env.FLUXOPAY_API || "https://api.fluxopay.com/v1"; 
 const FLUXO_TOKEN = process.env.FLUXO_TOKEN;
 const PAYMENT_PROVIDER = (process.env.PAYMENT_PROVIDER || 'fluxopay').toLowerCase(); // 'fluxopay' or 'axionpay'
 const AXION_PAY_URL = process.env.AXION_PAY_URL || 'http://localhost:3060';
-const AXION_PAY_KEY = process.env.AXION_PAY_KEY || process.env.API_KEY || '';
+const AXION_PAY_KEY = process.env.AXION_PAY_KEY || process.env.FLUXO_TOKEN || process.env.API_KEY || '';
 const ADMIN_ID = Number(process.env.ADMIN_CHAT_ID || 0);
 const APP_VERSION = process.env.npm_package_version || "dev";
 
@@ -118,12 +119,10 @@ const sendSupport = async (ctx, note) => {
 };
 
 
-// --- INTERFACE DA LOJA ---
-bot.start((ctx) => {
+const sendMainMenu = (ctx) => {
     const buttons = [
         [Markup.button.callback("\u{1F4B3} Comprar Cart\u00f5es (CC)", "cat_cards")],
         [Markup.button.callback("\u{1F48E} Upgrade VIP", "cat_vip")],
-        [Markup.button.callback("\u{1F4DA} Cat\u00e1logo", "catalogo")],
         [Markup.button.callback("\u{1F4E6} Meus Pedidos", "my_orders")],
         [Markup.button.callback("\u{1F3F7} Cupom", "cupom")],
         [Markup.button.callback("\u{1F198} Suporte", "suporte")],
@@ -132,13 +131,19 @@ bot.start((ctx) => {
         buttons.push([Markup.button.callback("\u{1F3EA} Status da Loja", "status_loja")]);
     }
 
-    ctx.replyWithHTML(
-        `\u{1F3EA} <b>AXION STORE v1.0</b>\n\n` +
-        `Bem-vindo \u00e0 loja oficial do ecossistema Axion.\n` +
-        `Selecione uma op\u00e7\u00e3o abaixo:`,
-        Markup.inlineKeyboard(buttons)
-    );
-});
+    const text = `\u{1F3EA} <b>AXION STORE v1.0</b>\n\n` +
+                 `Bem-vindo \u00e0 loja oficial do ecossistema Axion.\n` +
+                 `Selecione uma op\u00e7\u00e3o abaixo:`;
+
+    if (ctx.updateType === 'callback_query') {
+        ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }).catch(() => ctx.replyWithHTML(text, Markup.inlineKeyboard(buttons)));
+    } else {
+        ctx.replyWithHTML(text, Markup.inlineKeyboard(buttons));
+    }
+};
+
+bot.start(sendMainMenu);
+bot.action('main_menu', sendMainMenu);
 
 
 
@@ -264,6 +269,7 @@ bot.action("status_loja", async (ctx) => {
 
 // --- LISTAGEM DE PRODUTOS ---
 bot.action("cat_cards", async (ctx) => {
+    await ctx.answerCbQuery();
     const products = Database.getProducts().filter(p => p.category === 'cards');
     if (products.length === 0) return ctx.answerCbQuery("Estoque vazio!", { show_alert: true });
 
@@ -274,13 +280,29 @@ bot.action("cat_cards", async (ctx) => {
     });
 });
 
+bot.action("cat_vip", (ctx) => {
+    ctx.answerCbQuery();
+    const product = Database.getProductById('vip');
+    ctx.editMessageText(
+        `💎 <b>VIP ACCESS</b>\n\n` +
+        `Tenha acesso ilimitado a todas as ferramentas de busca e prioridade no suporte.\n` +
+        `Preço: <b>R$ ${product.price.toFixed(2)}</b>`,
+        {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback("💳 Comprar Agora", "buy_vip")],
+                [Markup.button.callback("🔙 Voltar", "main_menu")]
+            ])
+        }
+    );
+});
+
 // --- PROCESSO DE COMPRA (INTEGRAÇÃO FLUXOPAY) ---
 bot.action(/buy_(.+)/, async (ctx) => {
     const productId = ctx.match[1];
-    const products = Database.getProducts();
-    const product = products.find(p => p.id == productId);
+    const product = Database.getProductById(productId);
 
-    if (!product) return ctx.answerCbQuery("Produto n?o encontrado.");
+    if (!product) return ctx.answerCbQuery("Produto não encontrado.");
 
     await ctx.answerCbQuery("Gerando PIX de pagamento...");
 
@@ -339,28 +361,34 @@ bot.action(/buy_(.+)/, async (ctx) => {
                 ])
             );
         } else if (PAYMENT_PROVIDER === 'axionpay') {
-            const headers = { 'Content-Type': 'application/json' };
+            const headers = { 'Content-Type': 'application/json', 'pay-tag': 'user-test' };
             if (AXION_PAY_KEY) headers['Authorization'] = `Bearer ${AXION_PAY_KEY}`;
-            // Idempotency key
             headers['Idempotency-Key'] = orderId;
 
-            const response = await fetchWithRetry(`${AXION_PAY_URL.replace(/\/$/, '')}/payments/pix`, {
+            // Payload conforme especificação do usuário
+            const payload = {
+                amount: finalAmount,
+                customer: {
+                    name: ctx.from.first_name || 'Cliente',
+                    email: ctx.from.username ? `${ctx.from.username}@axion.fake` : 'cliente@axion.fake'
+                },
+                metadata: {
+                    orderId: orderId
+                }
+            };
+
+            const response = await fetchWithRetry('http://localhost:3060/payments/pix', {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({
-                    amount: finalAmount,
-                    external_id: `order_${orderId}`,
-                    description: `Axion Store - ${product.name}`,
-                    callback_url: process.env.CALLBACK_URL
-                })
+                body: JSON.stringify(payload)
             });
 
             const j = await response.json();
-            // Response format: { ok: true, transaction: {...}, pix_payload: '...', ... }
-            const tx = j.transaction || j.transaction || j;
-            const pid = tx?.id || j.id || j.transaction?.providerReference || j.providerReference;
-            const pixCode = j.pix_code || j.pix_payload || tx?.pix_payload || tx?.pix_code;
-            const payUrl = j.payment_url || tx?.payment_url || null;
+            const tx = j.transaction || j;
+            const pid = tx?.id || j.id || tx?.providerReference || j.providerReference;
+            // Extrai o código PIX do novo campo
+            const pixCode = tx?.metadata?.pix?.copia_colar || 'N/A';
+            const payUrl = null; // Não fornecido no payload de exemplo
 
             Database.updateOrder(orderId, {
                 status: 'pending_payment',
@@ -374,11 +402,10 @@ bot.action(/buy_(.+)/, async (ctx) => {
                 `\u{1F4E6} <b>Produto:</b> ${product.name}\n` +
                 `\u{1F4B5} <b>Valor:</b> R$ ${finalAmount}\n` +
                 (discount > 0 ? `\u{1F3F7} <b>Desconto:</b> R$ ${discount}\n` : '') +
-                `\u{1F4CC} <b>PIX COPIA E COLA:</b>\n<code>${pixCode || 'N/A'}</code>`,
+                `\u{1F4CC} <b>PIX COPIA E COLA:</b>\n<code>${pixCode}</code>`,
                 Markup.inlineKeyboard([
-                    payUrl ? [Markup.button.url("\u{1F517} Pagar no App", payUrl)] : [],
                     [Markup.button.callback("\u2705 Já paguei", `check_${pid || orderId}`)]
-                ].filter(Boolean))
+                ])
             );
         } else {
             throw new Error(`Unknown PAYMENT_PROVIDER: ${PAYMENT_PROVIDER}`);
@@ -388,6 +415,12 @@ bot.action(/buy_(.+)/, async (ctx) => {
         Database.updateOrder(orderId, { status: 'payment_failed' });
         console.error('payment creation error:', e);
         try { Database.addLog(`payment creation error: ${e && e.message ? e.message : String(e)}`); } catch (_) {}
+        
+        if (ADMIN_ID) {
+            let msg = `⚠️ <b>Erro no Pagamento</b>\nUser: ${ctx.from.id}\nErro: ${e.message}`;
+            if (e.message.includes('ECONNREFUSED') && AXION_PAY_URL.includes('localhost')) msg += `\n\n💡 <i>Gateway offline em ${AXION_PAY_URL}?</i>`;
+            bot.telegram.sendMessage(ADMIN_ID, msg, {parse_mode:'HTML'}).catch(()=>{});
+        }
         ctx.reply("\u274C Erro ao gerar pagamento. Tente novamente mais tarde.");
     }
 });
@@ -522,6 +555,95 @@ bot.action(/play_(.+)/, async (ctx) => {
 });
 
 bot.action('close_casino', (ctx) => ctx.deleteMessage());
+// ========== COMANDOS ADMINISTRATIVOS DE GESTÃO DE LOJA ==========
+// Confirmação manual de pagamento
+bot.command('confirmar_pagamento', async (ctx) => {
+    if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) return ctx.reply('❌ Acesso negado.');
+    const orderId = ctx.message.text.split(' ')[1];
+    if (!orderId) return ctx.reply('Use: /confirmar_pagamento ID_PEDIDO');
+    const order = Database.getOrder(orderId);
+    if (!order) return ctx.reply('Pedido não encontrado.');
+    if (["paid", "paid_pending_stock", "delivered"].includes(order.status)) return ctx.reply('Pedido já está pago ou entregue.');
+    Database.updateOrder(orderId, { status: "paid" });
+    Database.addRep(order.userId, 50);
+    try { await bot.telegram.sendMessage(order.userId, `🎉 <b>PAGAMENTO CONFIRMADO MANUALMENTE!</b>\nSeu pedido ${orderId} foi confirmado pelo administrador.`, { parse_mode: 'HTML' }); } catch (_) {}
+    const product = Database.getProductById(order.productId);
+    if (product?.category === 'vip') {
+        Database.toggleVip(order.userId);
+        try { await bot.telegram.sendMessage(order.userId, "VIP ativado para a sua conta."); } catch (_) {}
+    }
+    const item = Database.popStock(order.productId);
+    if (item) {
+        try { await bot.telegram.sendMessage(order.userId, `Produto: ${item}`); } catch (_) {}
+        Database.updateOrder(orderId, { status: 'delivered', deliveredAt: new Date().toISOString() });
+    } else {
+        try { await bot.telegram.sendMessage(order.userId, "Seu produto está em preparação. Em breve enviaremos aqui."); } catch (_) {}
+        Database.updateOrder(orderId, { status: 'paid_pending_stock' });
+    }
+    Database.addLog(`Pagamento confirmado manualmente: ${orderId}`);
+    ctx.reply('Pagamento confirmado e entrega processada.');
+});
+
+// Adicionar novo produto
+bot.command('addproduto', (ctx) => {
+    if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) return ctx.reply('❌ Acesso negado.');
+    const args = ctx.message.text.split(' ').slice(1);
+    if (args.length < 3) return ctx.reply('Use: /addproduto NOME PRECO CATEGORIA');
+    const [name, price, ...catArr] = args;
+    const category = catArr.join(' ');
+    const prod = Database.addProduct({ name, price: Number(price.replace(',', '.')), category });
+    ctx.replyWithHTML(`✅ Produto adicionado: <b>${prod.name}</b> (ID: ${prod.id})`);
+});
+
+// Adicionar estoque a um produto
+bot.command('addestoque', (ctx) => {
+    if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) return ctx.reply('❌ Acesso negado.');
+    const args = ctx.message.text.split(' ').slice(1);
+    if (args.length < 2) return ctx.reply('Use: /addestoque ID_PRODUTO ITEM1,ITEM2,...');
+    const [id, ...itemsArr] = args;
+    const items = itemsArr.join(' ').split(',').map(s => s.trim()).filter(Boolean);
+    if (!items.length) return ctx.reply('Nenhum item informado.');
+    const prod = Database.addStock(id, items);
+    if (!prod) return ctx.reply('Produto não encontrado.');
+    ctx.replyWithHTML(`✅ Estoque adicionado ao produto <b>${prod.name}</b>. Total em estoque: ${prod.stock.length}`);
+});
+
+// Listar pedidos recentes
+bot.command('pedidos', (ctx) => {
+    if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) return ctx.reply('❌ Acesso negado.');
+    const orders = Database.getOrders().slice(-10).reverse();
+    if (!orders.length) return ctx.reply('Nenhum pedido encontrado.');
+    const lines = orders.map(o => `ID: <b>${o.id}</b> | Usuário: <b>${o.userId}</b> | Produto: <b>${o.productId}</b> | Status: <b>${o.status}</b>`);
+    ctx.replyWithHTML('📝 <b>ÚLTIMOS PEDIDOS</b>\n\n' + lines.join('\n'));
+});
+
+// Entregar manualmente um item de pedido
+bot.command('entregar', (ctx) => {
+    if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) return ctx.reply('❌ Acesso negado.');
+    const orderId = ctx.message.text.split(' ')[1];
+    if (!orderId) return ctx.reply('Use: /entregar ID_PEDIDO');
+    const order = Database.getOrder(orderId);
+    if (!order) return ctx.reply('Pedido não encontrado.');
+    if (order.status !== 'paid' && order.status !== 'paid_pending_stock') return ctx.reply('Pedido não está pago ou já foi entregue.');
+    const item = Database.popStock(order.productId);
+    if (item) {
+        try { bot.telegram.sendMessage(order.userId, `Produto: ${item}`); } catch (_) {}
+        Database.updateOrder(orderId, { status: 'delivered', deliveredAt: new Date().toISOString() });
+        ctx.reply('Produto entregue ao usuário.');
+    } else {
+        ctx.reply('Sem estoque disponível para este produto.');
+    }
+});
+
+// Cancelar pedido
+bot.command('cancelar_pedido', (ctx) => {
+    if (!ADMIN_ID || ctx.from.id !== ADMIN_ID) return ctx.reply('❌ Acesso negado.');
+    const orderId = ctx.message.text.split(' ')[1];
+    if (!orderId) return ctx.reply('Use: /cancelar_pedido ID_PEDIDO');
+    const order = Database.getOrder(orderId);
+    if (!order) return ctx.reply('Pedido não encontrado.');
+    Database.updateOrder(orderId, { status: 'cancelled' });
+    ctx.reply('Pedido cancelado.');
+});
 
 bot.launch().then(() => console.log("🏪 AXION STORE ONLINE"));
-

@@ -118,8 +118,6 @@ bot.start((ctx) => {
         rows.push(['/banlist', '/unban']);
         rows.push(['/limpar_cache', '/ping_api']);
         rows.push(['/logs', '/limpar_logs']);
-        rows.push(['/repor_estoque', '/addestoque']);
-        rows.push(['/reembolso', '/pool_set']);
         rows.push(['/pool_add', '/lockdown_status']);
         rows.push(['/vip_lista', '/top_search']);
     }
@@ -252,7 +250,7 @@ bot.command('config', (ctx) => {
         ['CALLBACK_URL', !!process.env.CALLBACK_URL],
         ['FLUXO_WEBHOOK_TOKEN', !!process.env.FLUXO_WEBHOOK_TOKEN]
     ];
-    const lines = rows.map(([k, ok]) => `${ok ? '?' : '?'} ${k}`);
+    const lines = rows.map(([k, ok]) => `${ok ? '✅' : '❌'} ${k}`);
     ctx.replyWithHTML(`\u{1F9F0} <b>CONFIG</b>\n\n${lines.join('\n')}`);
 });
 

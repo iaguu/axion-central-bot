@@ -11,11 +11,11 @@
       "isVip": false
     },
     "7588553526": {
-      "rep": 2,
+      "rep": 52,
       "dailyCount": 2,
       "lastReq": 1767016684498,
       "lastReset": 1767016044132,
-      "isVip": true,
+      "isVip": false,
       "lastDaily": 1767017497601,
       "searchHistory": [
         {
@@ -75,7 +75,128 @@
       "name": "VIP30D",
       "price": 29,
       "category": "vip"
+    },
+    {
+      "id": "cc_gold",
+      "name": "CC Gold",
+      "price": 25,
+      "category": "cards",
+      "stock": [
+        "ITEM_IN_FILE"
+      ]
+    },
+    {
+      "id": "cc_platinum",
+      "name": "CC Platinum",
+      "price": 45,
+      "category": "cards",
+      "stock": [
+        "ITEM_IN_FILE"
+      ]
+    },
+    {
+      "id": "cc_infinity",
+      "name": "CC Infinity",
+      "price": 75,
+      "category": "cards",
+      "stock": [
+        "ITEM_IN_FILE"
+      ]
     }
   ],
-  "audit": []
+  "audit": [
+    {
+      "t": "29/12/2025, 18:25:39",
+      "a": "payment creation error: HTTP 401"
+    },
+    {
+      "t": "29/12/2025, 18:26:30",
+      "a": "Suporte: 7588553526 - Solicitou suporte pelo bot."
+    },
+    {
+      "t": "29/12/2025, 18:29:46",
+      "a": "payment creation error: HTTP 401"
+    },
+    {
+      "t": "29/12/2025, 22:22:58",
+      "a": "payment creation error: HTTP 403"
+    },
+    {
+      "t": "29/12/2025, 22:32:38",
+      "a": "Pagamento confirmado manualmente: o_1767058175206_501"
+    },
+    {
+      "t": "29/12/2025, 22:34:41",
+      "a": "fetch timeout: https://cog.api.br/api/v1/consulta?type=nome&dados=Ana%20Julia"
+    },
+    {
+      "t": "29/12/2025, 22:34:41",
+      "a": "busca nome erro: ETIMEOUT"
+    },
+    {
+      "t": "29/12/2025, 22:47:14",
+      "a": "fetch timeout: https://cog.api.br/api/v1/consulta?type=nome&dados=Ana%20Clara"
+    },
+    {
+      "t": "29/12/2025, 22:47:14",
+      "a": "busca inteligente erro: ETIMEOUT"
+    },
+    {
+      "t": "30/12/2025, 01:44:32",
+      "a": "UncaughtPromise: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"
+    }
+  ],
+  "orders": [
+    {
+      "id": "o_1767043537824_759",
+      "status": "payment_failed",
+      "createdAt": "2025-12-29T21:25:37.826Z",
+      "userId": 7588553526,
+      "productId": "vip",
+      "amount": 29.9,
+      "amountOriginal": 29.9,
+      "discount": 0,
+      "couponCode": null,
+      "updatedAt": "2025-12-29T21:25:39.939Z"
+    },
+    {
+      "id": "o_1767043784565_224",
+      "status": "payment_failed",
+      "createdAt": "2025-12-29T21:29:44.567Z",
+      "userId": 7588553526,
+      "productId": "cc_gold",
+      "amount": 25,
+      "amountOriginal": 25,
+      "discount": 0,
+      "couponCode": null,
+      "updatedAt": "2025-12-29T21:29:46.549Z"
+    },
+    {
+      "id": "o_1767057776656_757",
+      "status": "payment_failed",
+      "createdAt": "2025-12-30T01:22:56.658Z",
+      "userId": 7588553526,
+      "productId": "cc_gold",
+      "amount": 25,
+      "amountOriginal": 25,
+      "discount": 0,
+      "couponCode": null,
+      "updatedAt": "2025-12-30T01:22:58.985Z"
+    },
+    {
+      "id": "o_1767058175206_501",
+      "status": "paid_pending_stock",
+      "createdAt": "2025-12-30T01:29:35.208Z",
+      "userId": 7588553526,
+      "productId": "vip",
+      "amount": 29.9,
+      "amountOriginal": 29.9,
+      "discount": 0,
+      "couponCode": null,
+      "paymentId": "1a56ba90-e38c-49a2-b105-399ee80bbc54",
+      "pix_code": "00020101021126520014br.gov.bcb.pix0111382098478050215PAGAMENTO AXION520400005303986540429.95802BR5908AXIONPAY6009SAO PAULO622905251A56BA90E38C49A2B105399EE630457A1",
+      "payment_url": null,
+      "updatedAt": "2025-12-30T01:32:38.302Z"
+    }
+  ]
 }
